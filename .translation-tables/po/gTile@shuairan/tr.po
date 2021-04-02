@@ -1,0 +1,109 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# Gökhan GÖKKAYA <gokhanlnx@gmail.com>, 2018.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2021-03-02 21:25+0100\n"
+"PO-Revision-Date: 2018-12-25 15:01+0300\n"
+"Last-Translator: Gökhan GÖKKAYA <gokhanlnx@gmail.com>\n"
+"Language-Team: Linux Mint Türkiye <gokhanlnx@gmail.com>\n"
+"Language: tr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: Poedit 2.0.6\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: extension.js:43
+#, fuzzy
+msgid "Auto close"
+msgstr "Otomatik Kapat"
+
+#: extension.js:44
+#, fuzzy
+msgid "Animations"
+msgstr "Animasyon"
+
+#: extension.js:45
+msgid "Auto tile main and list"
+msgstr ""
+
+#: extension.js:46
+msgid "Auto tile two lists"
+msgstr ""
+
+#. metadata.json->name
+msgid "gTile"
+msgstr "gTile"
+
+#. metadata.json->description
+msgid "Tile your windows as you like."
+msgstr "Pencerelerinizi istediğiniz şekilde döşeyin."
+
+#. settings-schema.json->headerKeys->description
+msgid "Hotkeys:"
+msgstr "Kısayol tuşları:"
+
+#. settings-schema.json->hotkey->description
+msgid "Global Hotkey for gTile"
+msgstr "gTile için genel kısayol tuşu"
+
+#. settings-schema.json->headerBehavior->description
+msgid "Behavior:"
+msgstr ""
+
+#. settings-schema.json->animation->description
+msgid "Animation"
+msgstr "Animasyon"
+
+#. settings-schema.json->autoclose->description
+msgid "Auto-Close"
+msgstr "Otomatik Kapat"
+
+#. settings-schema.json->header1->description
+msgid "Layout for Button 1:"
+msgstr "Düğme 1:"
+
+#. settings-schema.json->gridbutton1x->units
+#. settings-schema.json->gridbutton2x->units
+#. settings-schema.json->gridbutton3x->units
+#. settings-schema.json->gridbutton4x->units
+msgid "x"
+msgstr "x"
+
+#. settings-schema.json->gridbutton1x->description
+#. settings-schema.json->gridbutton2x->description
+#. settings-schema.json->gridbutton3x->description
+#. settings-schema.json->gridbutton4x->description
+msgid "Columns"
+msgstr "Sütunlar"
+
+#. settings-schema.json->gridbutton1y->units
+#. settings-schema.json->gridbutton2y->units
+#. settings-schema.json->gridbutton3y->units
+#. settings-schema.json->gridbutton4y->units
+msgid "y"
+msgstr "y"
+
+#. settings-schema.json->gridbutton1y->description
+#. settings-schema.json->gridbutton2y->description
+#. settings-schema.json->gridbutton3y->description
+#. settings-schema.json->gridbutton4y->description
+msgid "Rows"
+msgstr "Satırlar"
+
+#. settings-schema.json->header2->description
+msgid "Layout for Button 2:"
+msgstr "Düğme 2:"
+
+#. settings-schema.json->header3->description
+msgid "Layout for Button 3:"
+msgstr "Düğme 3:"
+
+#. settings-schema.json->header4->description
+msgid "Layout for Button 4:"
+msgstr "Düğme 4:"
