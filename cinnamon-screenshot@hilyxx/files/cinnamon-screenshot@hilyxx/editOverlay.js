@@ -8,14 +8,17 @@ const GdkPixbuf = imports.gi.GdkPixbuf;
 const Gdk = imports.gi.Gdk;
 const Cairo = imports.cairo;
 const GLib = imports.gi.GLib;
-const ModalDialog = imports.ui.modalDialog;
+const ExtensionSystem = imports.ui.extensionSystem;
 const { GObject } = imports.gi;
 
 const { _ } = require('./translation');
 const { getTransitionManager } = require('./transitionEffects');
 
-const ICONS_PATH = __meta.path + '/icons/';
-const scriptPath = __meta.path + '/lib/gtk-filechooser.py';
+const UUID = 'cinnamon-screenshot@hilyxx';
+const EXTENSION_DIR = ExtensionSystem.extensionMeta[UUID].path
+
+const ICONS_PATH = EXTENSION_DIR + '/icons/';
+const scriptPath = EXTENSION_DIR + '/lib/gtk-filechooser.py';
 
 const BTN_TOOLBAR = 40;
 const BTN_CLOSE = 44;
@@ -28,22 +31,93 @@ const MOSAIC_INTENSITY_MIN = 0.15;         // Minimum mosaic effect
 const MOSAIC_INTENSITY_RANGE = 0.25;       // Mosaic intensity range
 const MOSAIC_BLEND_FACTOR = 0.8;           // Color preservation factor
 
+
+function queryInfoAsync(file, attributes) {
+    return new Promise((resolve, reject) => {
+        try {
+            file.query_info_async(
+                attributes,
+                Gio.FileQueryInfoFlags.NONE,
+                0,
+                null,
+                (source, res) => {
+                    try {
+                        const info = source.query_info_finish(res);
+                        resolve(info);
+                    } catch (e) {
+                        reject(e);
+                    }
+                }
+            );
+        } catch (err) {
+            reject(err);
+        }
+    });
+}
+
 // === MAIN EDIT DIALOG CLASS: INITIALIZATION & UI SETUP ===
 var ScreenshotEditDialog;
 if (typeof ScreenshotEditDialog !== 'function') {
     ScreenshotEditDialog = GObject.registerClass({
         GTypeName: `ScreenshotEditDialog_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
-    }, class ScreenshotEditDialog extends ModalDialog.ModalDialog {
+    }, class ScreenshotEditDialog extends St.Widget {        
         _init(filepath, onClose, state = null, preview = null, showBackButton = false, onOptionSelected = null) {
-            super._init({ styleClass: 'edit-modal', destroyOnClose: true, cinnamonReactive: false });
-            this._scale = St.ThemeContext.get_for_stage(global.stage).scale_factor || 1;
-
-            this._monitor = global.display.get_monitor_geometry(global.display.get_primary_monitor());
-            this._monitorConstraint = new Layout.MonitorConstraint({
-                primary: true,
-                work_area: false
+            
+            // Giant background covering all screens
+            super._init({
+                reactive: true,
+                x: 0,
+                y: 0,
+                width: global.stage.width,
+                height: global.stage.height,
+                style_class: 'edit-fullscreen-overlay'
             });
 
+            this._scale = St.ThemeContext.get_for_stage(global.stage).scale_factor || 1;
+
+            // Block clicks below and secure focus
+            this.connect('button-press-event', () => {
+                global.stage.set_key_focus(this);
+                return Clutter.EVENT_STOP;
+            });
+            this.connect('button-release-event', () => Clutter.EVENT_STOP);
+            this.connect('scroll-event', () => Clutter.EVENT_STOP);
+
+            // === KEYBOARD EVENT HANDLING ===
+            this.connect('key-press-event', (actor, event) => {
+                const keySymbol = event.get_key_symbol();
+                const state = event.get_state();
+                const isCtrl = (state & Clutter.ModifierType.CONTROL_MASK) !== 0;
+
+                // Handle ESC key to close the edit dialog
+                if (keySymbol === Clutter.KEY_Escape) {
+                    this.close();
+                    return Clutter.EVENT_STOP;
+                }
+
+                // Ctrl + Z shortcut to undo the last modification
+                if (isCtrl && (keySymbol === Clutter.KEY_z || keySymbol === Clutter.KEY_Z)) {
+                    this._undoLastAction();
+                    return Clutter.EVENT_STOP;
+                }
+
+                return Clutter.EVENT_PROPAGATE;
+            });
+
+            // Find the active monitor
+            const [mouseX, mouseY] = global.get_pointer();
+            let monitors = Main.layoutManager.monitors;
+            let monIndex = 0;
+            for (let i = 0; i < monitors.length; i++) {
+                if (mouseX >= monitors[i].x && mouseX < monitors[i].x + monitors[i].width &&
+                    mouseY >= monitors[i].y && mouseY < monitors[i].y + monitors[i].height) {
+                    monIndex = i;
+                    break;
+                }
+            }
+            this._monitor = monitors[monIndex];
+
+            // State initialization
             this._filepath = filepath;
             this._onClose = onClose;
             this._preview = preview;
@@ -51,52 +125,58 @@ if (typeof ScreenshotEditDialog !== 'function') {
             this._showBackButton = showBackButton || false;
             this._onOptionSelected = onOptionSelected;
                 
-            // Restore state if provided
             this._paths = state && state.paths ? JSON.parse(JSON.stringify(state.paths)) : [];
             this._color = state && state.color ? state.color : [0,0,0];
             this._thickness = state && state.thickness ? state.thickness : 5;
             this._currentTool = state && state.currentTool ? state.currentTool : 'brush';
-            
+
             // Cache for blur zones to avoid recalculation
             this._blurCache = new Map();
-            
-            // Transition manager
+
             this._transitionManager = getTransitionManager();
-            
-            // Init toolbar
+
+            // Main Overlay
+            this._mainOverlay = new St.Widget({
+                x: this._monitor.x,
+                y: this._monitor.y,
+                width: this._monitor.width,
+                height: this._monitor.height,
+                reactive: true
+            });
+            this.add_child(this._mainOverlay);
+
+            this._backgroundBarrier = new St.Widget({
+                width: this._monitor.width,
+                height: this._monitor.height,
+                style_class: 'edit-background-barrier'
+            });
+            this._mainOverlay.add_child(this._backgroundBarrier);
+
             this._initToolbarButtons();
 
-            // Sync toolbar visual state
-            this._setTool(this._currentTool);
-            this._setThickness(this._thickness);
-            this._setColor(this._color);
-            this._attachTooltips();
-            this._saveDialog = null;
-            this._updateActionBtnStates();
-
-            // Widgets: dynamic container size based on screen
+            // Drawing box (Superpose Box)
             const boxW = Math.round(this._monitor.width * 0.8);
             const boxH = Math.round(this._monitor.height * 0.8);
             this._superposeBox = new St.Widget({
                 style_class: 'edit-superpose-box',
                 width: boxW,
                 height: boxH,
-                layout_manager: new Clutter.BinLayout()
+                layout_manager: new Clutter.BinLayout(),
+                x: Math.round((this._monitor.width - boxW) / 2),
+                y: Math.round((this._monitor.height - boxH) / 2)
             });
-            this._superposeBox.set_position(
-                Math.round((this._monitor.width - boxW) / 2),
-                Math.round((this._monitor.height - boxH) / 2)
-            );
 
-            this._mainOverlay = new St.Widget({
-                width: this._monitor.width,
-                height: this._monitor.height,
-                layout_manager: new Clutter.BinLayout()
-            });
             this._mainOverlay.add_child(this._toolbar);
             this._mainOverlay.add_child(this._superposeBox);
             this._mainOverlay.add_child(this._closeBox);
-            this.contentLayout.add_child(this._mainOverlay);
+
+            // Visual synchronization
+            this._setTool(this._currentTool);
+            this._setThickness(this._thickness);
+            this._setColor(this._color);
+            this._attachTooltips();
+            this._saveDialog = null;
+            this._updateActionBtnStates();
 
             this._tooltip = new St.Label({
                 style_class: 'global-tooltip',
@@ -181,17 +261,6 @@ if (typeof ScreenshotEditDialog !== 'function') {
                     return GLib.SOURCE_REMOVE;
                 });
 
-            // === KEYBOARD EVENT HANDLING ===
-            // Handle ESC key to close the edit dialog
-            this.connect('key-press-event', (actor, event) => {
-                const keySymbol = event.get_key_symbol();
-                if (keySymbol === Clutter.KEY_Escape) {
-                    this.close();
-                    return Clutter.EVENT_STOP;
-                }
-                return Clutter.EVENT_PROPAGATE;
-            });
-
             // === INTERACTIONS: Drawing event handling ===
             // Manages mouse interactions for all drawing tools
             const getLocalCoords = (event) => {
@@ -206,7 +275,11 @@ if (typeof ScreenshotEditDialog !== 'function') {
                     this._shapeCurrent = localCoords;
                 };
 
-                this._drawingActor.connect('button-press-event', (actor, event) => {
+                   this._drawingActor.connect('button-press-event', (actor, event) => {
+                     // Return focus to the main editor unless you are about to create some text
+                    if (this._currentTool !== 'text') {
+                        global.stage.set_key_focus(this);
+                    }
                     const localCoords = getLocalCoords(event);
 
                     if (this._currentTool === 'eraser') {
@@ -226,7 +299,7 @@ if (typeof ScreenshotEditDialog !== 'function') {
                         startShapeDrawing(localCoords);
                     }
 
-                    if (['rect', 'ellipse', 'arrow'].includes(this._currentTool)) {
+                    if (['rect', 'ellipse', 'arrow', 'line', 'fillRect', 'fillEllipse', 'triangle', 'fillTriangle'].includes(this._currentTool)) {
                         startShapeDrawing(localCoords);
                     }
 
@@ -278,7 +351,7 @@ if (typeof ScreenshotEditDialog !== 'function') {
                     }
 
                     // Blur tool and shapes: update current position
-                    if (this._currentTool === 'blur' || ['rect', 'ellipse', 'arrow'].includes(this._currentTool)) {
+                    if (this._currentTool === 'blur' || ['rect', 'ellipse', 'arrow', 'line', 'fillRect', 'fillEllipse', 'triangle', 'fillTriangle'].includes(this._currentTool)) {
                         this._shapeCurrent = localCoords;
                         this._drawingCanvas.invalidate();
                     }
@@ -309,7 +382,7 @@ if (typeof ScreenshotEditDialog !== 'function') {
                     }
 
                     // Shapes: end drag, add shape to _paths
-                    if (['rect', 'ellipse', 'arrow'].includes(this._currentTool)) {
+                    if (['rect', 'ellipse', 'arrow', 'line', 'fillRect', 'fillEllipse', 'triangle', 'fillTriangle'].includes(this._currentTool)) {
                         this._drawing = false;
                         this._paths.push({ 
                             type: this._currentTool, 
@@ -338,7 +411,8 @@ if (typeof ScreenshotEditDialog !== 'function') {
                         this._drawPath(cr, path);
                     }
                     // Shape preview during drawing
-                    if (this._drawing && this._shapeStart && this._shapeCurrent && ['rect', 'ellipse', 'arrow', 'blur'].includes(this._currentTool)) {
+                    if (this._drawing && this._shapeStart && this._shapeCurrent && 
+                                 ['rect', 'ellipse', 'arrow', 'line', 'triangle', 'fillTriangle', 'fillRect', 'fillEllipse', 'blur'].includes(this._currentTool)) {
                         if (this._currentTool !== 'blur') {
                             this._drawPath(cr, {
                                 type: this._currentTool,
@@ -377,7 +451,7 @@ if (typeof ScreenshotEditDialog !== 'function') {
                 x_align: St.Align.START,
                 y_align: St.Align.START
             });
-            this._toolbar.set_width(860 * this._scale);
+            this._toolbar.set_width(1120 * this._scale);
             this._toolbar.set_height(54 * this._scale);
             this._toolbar.set_position(30 * this._scale, 30 * this._scale);
 
@@ -385,8 +459,13 @@ if (typeof ScreenshotEditDialog !== 'function') {
                 { name: '_brushButton', icon: 'draw-brush.svg', tool: 'brush', tooltip: _('Brush') },
                 { name: '_eraserButton', icon: 'draw-eraser.svg', tool: 'eraser', tooltip: _('Eraser') },
                 { name: '_arrowButton', icon: 'draw-arrow.svg', tool: 'arrow', tooltip: _('Arrow') },
+                { name: '_lineButton', icon: 'draw-line.svg', tool: 'line', tooltip: _('Line') },
                 { name: '_rectButton', icon: 'draw-rectangle.svg', tool: 'rect', tooltip: _('Rectangle') },
                 { name: '_ellipseButton', icon: 'draw-ellipse.svg', tool: 'ellipse', tooltip: _('Ellipse') },
+                { name: '_triangleButton', icon: 'draw-triangle.svg', tool: 'triangle', tooltip: _('Triangle') },
+                { name: '_fillRectButton', icon: 'draw-rectangle-filled.svg', tool: 'fillRect', tooltip: _('Filled Rectangle') },
+                { name: '_fillEllipseButton', icon: 'draw-ellipse-filled.svg', tool: 'fillEllipse', tooltip: _('Filled Ellipse') },
+                { name: '_fillTriangleButton', icon: 'draw-triangle-filled.svg', tool: 'fillTriangle', tooltip: _('Filled Triangle') },
                 { name: '_pixelButton', icon: 'draw-pixel.svg', tool: 'blur', tooltip: _('Pixelization') },
                 { name: '_textButton', icon: 'draw-text.svg', tool: 'text', tooltip: _('Text') }
             ];
@@ -597,9 +676,14 @@ if (typeof ScreenshotEditDialog !== 'function') {
             const toolMap = { 
                 brush: this._brushButton, 
                 eraser: this._eraserButton, 
-                arrow: this._arrowButton, 
+                arrow: this._arrowButton,
+                line: this._lineButton, 
                 rect: this._rectButton, 
-                ellipse: this._ellipseButton, 
+                ellipse: this._ellipseButton,
+                triangle: this._triangleButton,
+                fillRect: this._fillRectButton,
+                fillEllipse: this._fillEllipseButton,
+                fillTriangle: this._fillTriangleButton,
                 blur: this._pixelButton, 
                 text: this._textButton 
             };
@@ -697,6 +781,7 @@ if (typeof ScreenshotEditDialog !== 'function') {
                         let [x, y] = child.get_position ? child.get_position() : [0, 0];
                         let entryHeight = child._entryHeight || (child.get_height ? child.get_height() : 32);
                         let baselineY = y + (entryHeight * 0.8);
+
                         // Convert from box coordinates to canvas coordinates
                         const [canvasX, canvasY] = this._drawingActor.get_transformed_position();
                         const [boxX, boxY] = this._superposeBox.get_transformed_position();
@@ -719,7 +804,7 @@ if (typeof ScreenshotEditDialog !== 'function') {
                 }
             }
             if (grabFocus && hadTextEntry) {
-                global.stage.grab_key_focus();
+                global.stage.set_key_focus(this); // Remplace global.stage.grab_key_focus();
             }
             if (hadTextEntry && this._drawingCanvas)
                 this._drawingCanvas.invalidate();
@@ -735,6 +820,18 @@ if (typeof ScreenshotEditDialog !== 'function') {
             let canvasLocalY = stageY - canvasY;
 
             const textEntry = new St.Entry({ text: '', style_class: 'edit-text-entry' });
+            textEntry.connect('key-press-event', (actor, event) => {
+                const keySymbol = event.get_key_symbol();
+                const state = event.get_state();
+                const isCtrl = (state & Clutter.ModifierType.CONTROL_MASK) !== 0;
+
+                if (isCtrl && (keySymbol === Clutter.KEY_z || keySymbol === Clutter.KEY_Z)) {
+                    this._undoLastAction();
+                    return Clutter.EVENT_STOP;
+                }
+                return Clutter.EVENT_PROPAGATE;
+            });
+
             textEntry._textColor = this._color;
             textEntry._textThickness = this._thickness;
             textEntry._canvasX = localCoords[0];
@@ -768,6 +865,18 @@ if (typeof ScreenshotEditDialog !== 'function') {
         /** Creates an interactive text field from a static text path (for re-editing) */
         _createTextEntryFromPath(path) {
             const textEntry = new St.Entry({ text: path.text, style_class: 'edit-text-entry' });
+            textEntry.connect('key-press-event', (actor, event) => {
+                const keySymbol = event.get_key_symbol();
+                const state = event.get_state();
+                const isCtrl = (state & Clutter.ModifierType.CONTROL_MASK) !== 0;
+
+                if (isCtrl && (keySymbol === Clutter.KEY_z || keySymbol === Clutter.KEY_Z)) {
+                    this._undoLastAction();
+                    return Clutter.EVENT_STOP;
+                }
+                return Clutter.EVENT_PROPAGATE;
+            });
+
             textEntry._textColor = path.color;
             textEntry._textThickness = path.thickness;
             const [canvasX, canvasY] = this._drawingActor.get_transformed_position();
@@ -857,15 +966,16 @@ if (typeof ScreenshotEditDialog !== 'function') {
          */
         _showDialogWidget({title, buttons, width = 400, height = 220}) {
             if (this._genericDialog) return;
+            
+            // Place the dialogue background on the exact coordinates of the correct monitor
             this._genericDialog = new St.Widget({
                 style_class: 'edit-dialog-widget-bg',
                 reactive: true,
-                x_expand: true,
-                y_expand: true,
-                layout_manager: new Clutter.BinLayout()
+                x: this._monitor.x,
+                y: this._monitor.y,
+                width: this._monitor.width,
+                height: this._monitor.height
             });
-            this._genericDialog.set_size(this._monitor.width, this._monitor.height);
-            this._genericDialog.set_position(0, 0);
 
             const dialogBox = new St.BoxLayout({
                 vertical: true,
@@ -873,6 +983,7 @@ if (typeof ScreenshotEditDialog !== 'function') {
             });
             dialogBox.set_width(width * this._scale);
             dialogBox.set_height(height * this._scale);
+            
             dialogBox.set_position(
                 Math.round((this._monitor.width - width * this._scale * 0.925) / 2),
                 Math.round((this._monitor.height - height * this._scale) / 2)
@@ -886,7 +997,7 @@ if (typeof ScreenshotEditDialog !== 'function') {
                 const stBtn = new St.Button({ label: btn.label, style_class: btn.styleClass || 'edit-dialog-widget-btn' });
                 stBtn.connect('clicked', () => {
                     if (this._genericDialog) {
-                        global.stage.remove_child(this._genericDialog);
+                        this.remove_child(this._genericDialog);
                         this._genericDialog.destroy();
                         this._genericDialog = null;
                     }
@@ -896,6 +1007,7 @@ if (typeof ScreenshotEditDialog !== 'function') {
             }
             dialogBox.add_child(buttonBox);
             this._genericDialog.add_child(dialogBox);
+            
             this.add_child(this._genericDialog);
             this.set_child_above_sibling(this._genericDialog, null);
         }
@@ -964,15 +1076,7 @@ if (typeof ScreenshotEditDialog !== 'function') {
                         label: _('Yes'),
                         onClick: () => {
                             this._resetDrawing();
-                            if (typeof require === 'function') {
-                                try {
-                                    const { showScreenshotPreview } = require('./preview');
-                                    showScreenshotPreview(this._filepath, () => {}, this._onOptionSelected, this._showBackButton);
-                                } catch (e) {
-                                    global.log('CS: error returning to preview: ' + e);
-                                }
-                            }
-                            this.close(true);
+                            this.close(true, false);
                         }
                     },
                     {
@@ -1010,111 +1114,134 @@ if (typeof ScreenshotEditDialog !== 'function') {
                 return;
             }
             this._resetDrawing();
-            this._transitionManager.fadeOut(this, { instant: true, onComplete: () => this._cleanupAndClose(true) });
-            if (typeof require === 'function') {
-                try {
-                    const { showScreenshotPreview } = require('./preview');
-                    showScreenshotPreview(this._filepath, () => {}, this._onOptionSelected, this._showBackButton);
-                } catch (e) {
-                    global.log('CS: error returning to preview: ' + e);
-                }
+            if (this._transitionManager) {
+                this._transitionManager.fadeOut(this, { 
+                    instant: true, 
+                    onComplete: () => this._cleanupAndClose(false) 
+                });
+            } else {
+                this._cleanupAndClose(false);
             }
         }
 
         _saveAsCopy() {
-            const picturesDir = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES)
-                || GLib.get_home_dir() + '/Pictures';
-            let currentState = this._getCurrentState();
-            let filepath = this._filepath;
-            let onClose = this._onClose;
-            let preview = this._preview;
-            // Close edit mode and preview before opening file chooser
-            this.close(true, true);
-            if (preview) preview.close();
-            const file = Gio.File.new_for_path(scriptPath);
-            if (!file.query_exists(null)) {
-                Main.notifyError(_('Script gtk-filechooser.py not available', "Unable to open file chooser."));
-                if (typeof require === 'function') {
-                    try {
-                        const { showScreenshotPreview } = require('./preview');
-                        showScreenshotPreview(filepath, () => {}, this._onOptionSelected, this._showBackButton, currentState);
-                    } catch (e) {
-                        global.log('CS: error returning to preview: ' + e);
-                    }
+            // PRE-RENDER IMAGE (Before destroying the window)
+            let pixbufOut = null;
+            try {
+                let pixbuf = GdkPixbuf.Pixbuf.new_from_file(this._filepath);
+                let width = pixbuf.get_width();
+                let height = pixbuf.get_height();
+                let surface = new Cairo.ImageSurface(Cairo.Format.ARGB32, width, height);
+                let cr = new Cairo.Context(surface);
+                Gdk.cairo_set_source_pixbuf(cr, pixbuf, 0, 0);
+                cr.paint();
+                
+                let scaleX = width / this._canvasWidth;
+                let scaleY = height / this._canvasHeight;
+                cr.save();
+                cr.scale(scaleX, scaleY);
+                for (let path of this._paths) {
+                    this._drawPath(cr, path, true);
                 }
+                cr.restore();
+                surface.flush();
+                
+                pixbufOut = Gdk.pixbuf_get_from_surface(surface, 0, 0, width, height);
+            } catch (e) {
+                global.log('CS: error during pre-render (Save as): ' + e);
+                Main.notifyError(_('Error saving'), '' + e);
                 return;
             }
-            let defaultName = GLib.path_get_basename(filepath);
-            let extIndex = defaultName.lastIndexOf('.');
-            if (extIndex > 0) {
-                defaultName = defaultName.slice(0, extIndex) + '_copy' + defaultName.slice(extIndex);
-            } else {
-                defaultName = defaultName + '_copy';
-            }
-            let argv = [
-                'python3', scriptPath,
-                '--title', _('Save as...'),
-                '--filename', defaultName,
-                '--directory', picturesDir,
-                '--filter', _('Images'),
-                '--save-button', _('Save'),
-                '--cancel-button', _('Cancel')
-            ];
-            let proc = new Gio.Subprocess({
-                argv: argv,
-                flags: Gio.SubprocessFlags.STDOUT_PIPE
-            });
-            proc.init(null);
-            const reopenPreview = (persistState) => {
-                if (typeof require === 'function') {
-                    try {
-                        const { showScreenshotPreview } = require('./preview');
-                        showScreenshotPreview(filepath, () => {}, this._onOptionSelected, this._showBackButton, persistState ? currentState : null);
-                    } catch (e) {
-                        global.log('CS: error returning to preview: ' + e);
+
+            // CAPTURE VARIABLES FOR REOPENING
+            let currentState = this._getCurrentState();
+            let filepath = this._filepath;
+
+            const safeReopenPreview = (stateToRestore) => {
+                GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                    if (typeof this._onClose === 'function') {
+                        this._onClose(stateToRestore);
                     }
-                }
+                    return GLib.SOURCE_REMOVE;
+                });
             };
-            proc.communicate_utf8_async(null, null, (proc, res) => {
-                try {
-                    const [, stdout] = proc.communicate_utf8_finish(res);
-                    const destPath = stdout.trim();
-                    if (destPath) {
-                        try {
-                            let pixbuf = GdkPixbuf.Pixbuf.new_from_file(filepath);
-                            let width = pixbuf.get_width();
-                            let height = pixbuf.get_height();
-                            let surface = new Cairo.ImageSurface(Cairo.Format.ARGB32, width, height);
-                            let cr = new Cairo.Context(surface);
-                            Gdk.cairo_set_source_pixbuf(cr, pixbuf, 0, 0);
-                            cr.paint();
-                            let scaleX = width / this._canvasWidth;
-                            let scaleY = height / this._canvasHeight;
-                            cr.save();
-                            cr.scale(scaleX, scaleY);
-                            for (let path of this._paths) {
-                                this._drawPath(cr, path, true);
-                            }
-                            cr.restore();
-                            surface.flush();
-                            let pixbufOut = Gdk.pixbuf_get_from_surface(surface, 0, 0, width, height);
-                            pixbufOut.savev(destPath, 'png', [], []);
-                        } catch (e) {
-                            global.log('CS: error during merge/save (Save as): ' + e);
-                            Main.notifyError(_('Error saving', '' + e));
-                            return reopenPreview(true);
+
+            // INSTANTLY CLOSE EDITOR
+            // Using _cleanupAndClose(true) destroys the object and releases the modal grab immediately
+            this._cleanupAndClose(true);
+
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                // Wrapper asynchrone IIFE
+                (async () => {
+                    const file = Gio.File.new_for_path(scriptPath);
+                    try {
+                        await queryInfoAsync(file, 'standard::type');
+                    } catch (e) {
+                        if (e.matches && e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND)) {
+                            Main.notifyError(_('Script gtk-filechooser.py not available'), _('Unable to open file chooser.'));
+                            safeReopenPreview(currentState);
+                            return;
                         }
-                        // After saving, return to preview with original image, no persistence
-                        return reopenPreview(false);
-                    } else {
-                        // If cancelled, keep persistence
-                        return reopenPreview(true);
                     }
-                } catch (e) {
-                    global.log('CS: error gtk-filechooser.py: ' + e);
-                    // Always reopen the preview with persistence
-                    return reopenPreview(true);
-                }
+
+                    const picturesDir = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES)
+                        || GLib.get_home_dir();
+
+                    let defaultName = GLib.path_get_basename(filepath);
+                    let extIndex = defaultName.lastIndexOf('.');
+                    if (extIndex > 0) {
+                        defaultName = defaultName.slice(0, extIndex) + '_copy' + defaultName.slice(extIndex);
+                    } else {
+                        defaultName = defaultName + '_copy';
+                    }
+
+                    const argv = [
+                        'python3', scriptPath,
+                        '--title', _('Save as...'),
+                        '--filename', defaultName,
+                        '--directory', picturesDir,
+                        '--filter', _('Images'),
+                        '--save-button', _('Save'),
+                        '--cancel-button', _('Cancel')
+                    ];
+
+                    const proc = new Gio.Subprocess({
+                        argv: argv,
+                        flags: Gio.SubprocessFlags.STDOUT_PIPE
+                    });
+                    proc.init(null);
+
+                    proc.communicate_utf8_async(null, null, (proc, res) => {
+                        try {
+                            const [, stdout] = proc.communicate_utf8_finish(res);
+                            const destPath = stdout.trim();
+                            
+                            if (destPath) {
+                                try {
+                                    // Save the final rendered copy
+                                    pixbufOut.savev(destPath, 'png', [], []);
+                                    
+                                    // SUCCESS: The original temporary file still exists!
+                                    // We reopen the preview with 'null' state to show the unmodified capture.
+                                    safeReopenPreview(null);
+                                    
+                                } catch (e) {
+                                    global.log('CS: error saving copy: ' + e);
+                                    Main.notifyError(_('Error saving'), '' + e);
+                                    safeReopenPreview(currentState);
+                                }
+                            } else {
+                                // Cancelled by user: restore edit state
+                                safeReopenPreview(currentState);
+                            }
+                        } catch (e) {
+                            global.log('CS: error gtk-filechooser.py: ' + e);
+                            safeReopenPreview(currentState);
+                        }
+                    });
+                })().catch(err => global.logError('CS Error in _saveAsCopy: ' + err));
+                
+                return GLib.SOURCE_REMOVE; 
             });
         }
 
@@ -1139,6 +1266,39 @@ if (typeof ScreenshotEditDialog !== 'function') {
             if (this._drawingCanvas)
                 this._drawingCanvas.invalidate();
             this._updateActionBtnStates();
+        }
+
+        _undoLastAction() {
+            // Cancel a text field whilst typing
+            let entryWasEmpty = false;
+            if (this._superposeBox) {
+                let children = this._superposeBox.get_children();
+                for (let i = children.length - 1; i >= 0; i--) {
+                    let child = children[i];
+                    if (child.has_style_class_name && child.has_style_class_name('edit-text-entry')) {
+                        const text = child.get_text();
+                        if (text.trim().length === 0) {
+                            entryWasEmpty = true;
+                        }
+                        this._superposeBox.remove_child(child);
+                        child.destroy();
+                        this._updateActionBtnStates();
+                        global.stage.set_key_focus(this);
+                        
+                        if (!entryWasEmpty) return;
+                        break; 
+                    }
+                }
+            }
+
+            // Undo the last line/shape
+            if (this._paths && this._paths.length > 0) {
+                this._paths.pop();
+                if (this._drawingCanvas) {
+                    this._drawingCanvas.invalidate();
+                }
+                this._updateActionBtnStates();
+            }
         }
 
         _getCurrentState() {
@@ -1187,6 +1347,15 @@ if (typeof ScreenshotEditDialog !== 'function') {
             cr.stroke();
         }
 
+        _drawFilledRectangle(cr, start, end) {
+            let x = Math.min(start[0], end[0]);
+            let y = Math.min(start[1], end[1]);
+            let w = Math.abs(end[0] - start[0]);
+            let h = Math.abs(end[1] - start[1]);
+            cr.rectangle(x, y, w, h);
+            cr.fill();
+        }
+
         _drawEllipse(cr, start, end) {
             let x = (start[0] + end[0]) / 2;
             let y = (start[1] + end[1]) / 2;
@@ -1198,6 +1367,19 @@ if (typeof ScreenshotEditDialog !== 'function') {
             cr.arc(0, 0, 1, 0, 2 * Math.PI);
             cr.restore();
             cr.stroke();
+        }
+
+        _drawFilledEllipse(cr, start, end) {
+            let x = (start[0] + end[0]) / 2;
+            let y = (start[1] + end[1]) / 2;
+            let rx = Math.abs(end[0] - start[0]) / 2;
+            let ry = Math.abs(end[1] - start[1]) / 2;
+            cr.save();
+            cr.translate(x, y);
+            cr.scale(rx || 1, ry || 1);
+            cr.arc(0, 0, 1, 0, 2 * Math.PI);
+            cr.restore();
+            cr.fill();
         }
 
         _drawArrow(cr, start, end, thickness) {
@@ -1230,6 +1412,52 @@ if (typeof ScreenshotEditDialog !== 'function') {
                 cr.lineTo(hx2, hy2);
                 cr.stroke();
             }
+        }
+
+        _drawTriangle(cr, start, end) {
+            
+            let topX = start[0] + (end[0] - start[0]) / 2;
+            let topY = start[1];
+            
+            let bottomRightX = end[0];
+            let bottomRightY = end[1];
+            
+            let bottomLeftX = start[0];
+            let bottomLeftY = end[1];
+
+            cr.moveTo(topX, topY);
+            cr.lineTo(bottomRightX, bottomRightY);
+            cr.lineTo(bottomLeftX, bottomLeftY);
+            
+            cr.closePath(); 
+            
+            cr.stroke();
+        }
+
+        _drawFilledTriangle(cr, start, end) {
+            
+            let topX = start[0] + (end[0] - start[0]) / 2;
+            let topY = start[1];
+            
+            let bottomRightX = end[0];
+            let bottomRightY = end[1];
+            
+            let bottomLeftX = start[0];
+            let bottomLeftY = end[1];
+
+            cr.moveTo(topX, topY);
+            cr.lineTo(bottomRightX, bottomRightY);
+            cr.lineTo(bottomLeftX, bottomLeftY);
+            
+            cr.closePath(); 
+            
+            cr.fill();
+        }
+
+        _drawLine(cr, start, end) {
+            cr.moveTo(start[0], start[1]);
+            cr.lineTo(end[0], end[1]);
+            cr.stroke();
         }
 
         _drawBlur(cr, start, end, thickness, useCache = true) {
@@ -1413,7 +1641,7 @@ if (typeof ScreenshotEditDialog !== 'function') {
                     if (this._distancePointToSegment([x, y], path.points[i-1], path.points[i]) < tol)
                         return true;
                 }          
-             } else if (path.type === 'arrow') {
+             } else if (path.type === 'arrow' || path.type === 'line') {
                 if (path.start && path.end) {
                     if (this._distancePointToSegment([x, y], path.start, path.end) < tol)
                         return true;
@@ -1465,6 +1693,16 @@ if (typeof ScreenshotEditDialog !== 'function') {
                     this._drawEllipse(cr, path.start, path.end);
                 } else if (path.type === 'arrow') {
                     this._drawArrow(cr, path.start, path.end, path.thickness);
+                } else if (path.type === 'line') {
+                    this._drawLine(cr, path.start, path.end);
+                } else if (path.type === 'triangle') {
+                    this._drawTriangle(cr, path.start, path.end);
+                } else if (path.type === 'fillRect') {
+                    this._drawFilledRectangle(cr, path.start, path.end);
+                } else if (path.type === 'fillEllipse') {
+                    this._drawFilledEllipse(cr, path.start, path.end);
+                } else if (path.type === 'fillTriangle') {
+                    this._drawFilledTriangle(cr, path.start, path.end);
                 } else if (path.type === 'blur') {
                     if (forSave) {
                         this._drawBlur(cr, path.start, path.end, path.thickness, false); // Pass false for useCache
@@ -1476,23 +1714,24 @@ if (typeof ScreenshotEditDialog !== 'function') {
         }
         
         // === MODAL OPEN/CLOSE === 
-        // Overrides the default ModalDialog behavior with custom transitions
-        open(timestamp) {
-            if (this._transitionManager.isTransitioning()) return false;
+        open() {
+            if (this._transitionManager && this._transitionManager.isTransitioning()) return false;
             
-            // Call parent open method first
-            const result = super.open(timestamp);
-            if (!result) return false;
+            Main.uiGroup.add_child(this);
             
-            // Use transition manager for opening
-            this._transitionManager.fadeIn(this);
-            
+            // Force Cinnamon to redirect all events to our widget
+            Main.pushModal(this);
+            global.stage.set_key_focus(this);
+
+            if (this._transitionManager) {
+                this._transitionManager.fadeIn(this);
+            }
             return true;
         }
-        close(suppressOnClose = false, skipPreview = false) {
-            if (this._transitionManager.isTransitioning()) return;
 
-            // If there are unsaved changes, show confirmation dialog
+        close(suppressOnClose = false, skipPreview = false) {
+            if (this._transitionManager && this._transitionManager.isTransitioning()) return;
+
             const hasModif = this._saveButton && this._cancelDrawButton &&
                 (!this._saveButton.has_style_class_name('disabled') || !this._cancelDrawButton.has_style_class_name('disabled'));
 
@@ -1501,24 +1740,25 @@ if (typeof ScreenshotEditDialog !== 'function') {
                 return;
             }
 
-            // Show preview immediately on close, except for 'Save As' where preview must wait for file dialog to finish
-            if (this._onClose && !skipPreview) {
-                try {
-                    const { showScreenshotPreview } = require('./preview');
-                    showScreenshotPreview(this._filepath, () => {}, this._onOptionSelected, this._showBackButton);
-                } catch (e) {
-                    global.log('CS: error returning to preview: ' + e);
-                }
+            if (this._transitionManager) {
+                this._transitionManager.fadeOut(this, {
+                    onComplete: () => {
+                        this._cleanupAndClose(skipPreview);
+                    }
+                });
+            } else {
+                this._cleanupAndClose(skipPreview);
             }
-            this._transitionManager.fadeOut(this, {
-                onComplete: () => {
-                    this._cleanupAndClose(true);
-                }
-            });
         }
 
          // === CLEANUP AND CLOSE ===
         _cleanupAndClose(suppressOnClose) {
+            if (this._backgroundBarrier) {
+                if (this._backgroundBarrier.get_parent())
+                    this._backgroundBarrier.get_parent().remove_child(this._backgroundBarrier);
+                this._backgroundBarrier.destroy();
+                this._backgroundBarrier = null;
+            }
             if (this._drawingCanvas && this._drawSignalId) {
                 this._drawingCanvas.disconnect(this._drawSignalId);
                 this._drawSignalId = null;
@@ -1557,11 +1797,19 @@ if (typeof ScreenshotEditDialog !== 'function') {
                 this._blurCache.clear();
                 this._blurCache = null;
             }
-            // Close modal
+            
+            // Release the system keyboard/mouse grab
+            Main.popModal(this);
+
             if (!suppressOnClose && typeof this._onClose === 'function') {
                 this._onClose(this._getCurrentState());
             }
-            super.close();
+            
+            // Final widget destruction
+            if (this.get_parent()) {
+                this.get_parent().remove_child(this);
+            }
+            this.destroy();
         }
     });
 }

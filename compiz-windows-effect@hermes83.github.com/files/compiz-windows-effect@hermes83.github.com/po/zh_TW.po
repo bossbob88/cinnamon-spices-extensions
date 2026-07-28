@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: compiz-windows-effect@hermes83.github.com 2\n"
 "Report-Msgid-Bugs-To: https://github.com/linuxmint/cinnamon-spices-"
 "extensions/issues\n"
-"POT-Creation-Date: 2025-11-25 10:07-0500\n"
+"POT-Creation-Date: 2026-07-04 10:37-0400\n"
 "PO-Revision-Date: 2026-06-01 14:02+0800\n"
 "Last-Translator: Alang Hsu <alang.hsu@gmail.com>\n"
 "Language-Team: Chinese (Traditional)\n"
@@ -17,14 +17,17 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: Hermes Agent + po_gen.py\n"
 
-#. extension.js:190
+#. extension.js:197
 msgid "Error"
 msgstr "錯誤"
 
-#. extension.js:191
+#. extension.js:198
 msgid ""
-"Unable to determine the application or the WM_CLASS of the previously focused window, therefore Compiz window effects can not be disabled for that window"
-msgstr "無法判斷先前聚焦的視窗或其 WM_CLASS，因此無法對該視窗停用 Compiz 視窗效果"
+"Unable to determine the application or the WM_CLASS of the previously "
+"focused window, therefore Compiz window effects can not be disabled for that "
+"window"
+msgstr ""
+"無法判斷先前聚焦的視窗或其 WM_CLASS，因此無法對該視窗停用 Compiz 視窗效果"
 
 #. metadata.json->description
 msgid "Compiz wobbly windows effect thanks to compiz plugin engine"
@@ -42,6 +45,10 @@ msgstr "一般"
 msgid "Exclude List"
 msgstr "排除清單"
 
+#. settings-schema.json->power-page->title
+msgid "Power"
+msgstr ""
+
 #. settings-schema.json->preset-section->title
 msgid "Compiz windows effect configuration"
 msgstr "Compiz 視窗效果設定"
@@ -54,29 +61,62 @@ msgstr "自訂效果設定"
 msgid "Application windows where no window effects will be applied"
 msgstr "不套用視窗效果的應用程式視窗"
 
+#. settings-schema.json->power-section->title
+msgid "Manage power consumption"
+msgstr ""
+
 #. settings-schema.json->presetList->options
+#. settings-schema.json->powerPresetList->options
 msgid "Subtle"
 msgstr "輕柔"
 
 #. settings-schema.json->presetList->options
+#. settings-schema.json->powerPresetList->options
 msgid "Realistic"
 msgstr "寫實"
 
 #. settings-schema.json->presetList->options
+#. settings-schema.json->powerPresetList->options
 msgid "Exaggerated"
 msgstr "誇張"
 
 #. settings-schema.json->presetList->options
+#. settings-schema.json->powerPresetList->options
 msgid "Extreme"
 msgstr "極致"
 
 #. settings-schema.json->presetList->options
+#. settings-schema.json->powerPresetList->options
 msgid "Custom"
 msgstr "自訂"
 
 #. settings-schema.json->presetList->description
 msgid "Effect style"
 msgstr "效果樣式"
+
+#. settings-schema.json->powerPresetList->options
+msgid "None"
+msgstr ""
+
+#. settings-schema.json->powerPresetList->description
+msgid "Effect style when running on battery power"
+msgstr ""
+
+#. settings-schema.json->power-onbattery->description
+msgid "Use different effect settings when running on battery power"
+msgstr ""
+
+#. settings-schema.json->power-onbattery->tooltip
+msgid ""
+"When enabled, a set of options will appear allowing you to define the effect "
+"settings used when running on battery power and the battery charge state is "
+"less than the set limit. These settings will take precedence over the "
+"general settings when the battery charge state condition is met."
+msgstr ""
+
+#. settings-schema.json->power-percent->description
+msgid "When battery is less than (percent)"
+msgstr ""
 
 #. settings-schema.json->excludeList->description
 msgid "Application exclude list"
@@ -88,7 +128,8 @@ msgstr "應用程式"
 
 #. settings-schema.json->excludeList->tooltip
 msgid ""
-"Defines a list of applications where the \"Compiz window effect\" effects will not be applied."
+"Defines a list of applications where the \"Compiz window effect\" effects "
+"will not be applied."
 msgstr "定義不套用「Compiz 視窗效果」的應用程式清單。"
 
 #. settings-schema.json->excludeButton->description
@@ -97,7 +138,8 @@ msgstr "為最近聚焦的視窗新增項目"
 
 #. settings-schema.json->excludeButton->tooltip
 msgid ""
-"Focus the window you want to disable window effects for, then return here and press this button."
+"Focus the window you want to disable window effects for, then return here "
+"and press this button."
 msgstr "聚焦您想要停用視窗效果的視窗，然後返回此處並按下此按鈕。"
 
 #. settings-schema.json->friction->description

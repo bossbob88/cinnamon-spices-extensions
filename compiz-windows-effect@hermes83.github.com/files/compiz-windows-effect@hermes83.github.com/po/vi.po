@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: \n"
 "Report-Msgid-Bugs-To: https://github.com/linuxmint/cinnamon-spices-"
 "extensions/issues\n"
-"POT-Creation-Date: 2025-11-25 10:07-0500\n"
+"POT-Creation-Date: 2026-07-04 10:37-0400\n"
 "PO-Revision-Date: 2025-10-19 02:27+0700\n"
 "Last-Translator: loccun <huynhloc.contact@gmail.com>\n"
 "Language-Team: \n"
@@ -19,11 +19,11 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: Poedit 3.4.2\n"
 
-#. extension.js:190
+#. extension.js:197
 msgid "Error"
 msgstr ""
 
-#. extension.js:191
+#. extension.js:198
 msgid ""
 "Unable to determine the application or the WM_CLASS of the previously "
 "focused window, therefore Compiz window effects can not be disabled for that "
@@ -46,6 +46,10 @@ msgstr ""
 msgid "Exclude List"
 msgstr ""
 
+#. settings-schema.json->power-page->title
+msgid "Power"
+msgstr ""
+
 #. settings-schema.json->preset-section->title
 #, fuzzy
 msgid "Compiz windows effect configuration"
@@ -59,28 +63,61 @@ msgstr ""
 msgid "Application windows where no window effects will be applied"
 msgstr ""
 
+#. settings-schema.json->power-section->title
+msgid "Manage power consumption"
+msgstr ""
+
 #. settings-schema.json->presetList->options
+#. settings-schema.json->powerPresetList->options
 msgid "Subtle"
 msgstr ""
 
 #. settings-schema.json->presetList->options
+#. settings-schema.json->powerPresetList->options
 msgid "Realistic"
 msgstr ""
 
 #. settings-schema.json->presetList->options
+#. settings-schema.json->powerPresetList->options
 msgid "Exaggerated"
 msgstr ""
 
 #. settings-schema.json->presetList->options
+#. settings-schema.json->powerPresetList->options
 msgid "Extreme"
 msgstr ""
 
 #. settings-schema.json->presetList->options
+#. settings-schema.json->powerPresetList->options
 msgid "Custom"
 msgstr ""
 
 #. settings-schema.json->presetList->description
 msgid "Effect style"
+msgstr ""
+
+#. settings-schema.json->powerPresetList->options
+msgid "None"
+msgstr ""
+
+#. settings-schema.json->powerPresetList->description
+msgid "Effect style when running on battery power"
+msgstr ""
+
+#. settings-schema.json->power-onbattery->description
+msgid "Use different effect settings when running on battery power"
+msgstr ""
+
+#. settings-schema.json->power-onbattery->tooltip
+msgid ""
+"When enabled, a set of options will appear allowing you to define the effect "
+"settings used when running on battery power and the battery charge state is "
+"less than the set limit. These settings will take precedence over the "
+"general settings when the battery charge state condition is met."
+msgstr ""
+
+#. settings-schema.json->power-percent->description
+msgid "When battery is less than (percent)"
 msgstr ""
 
 #. settings-schema.json->excludeList->description

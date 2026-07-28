@@ -32,10 +32,12 @@ const Cinnamon = imports.gi.Cinnamon;
 const MessageTray = imports.ui.messageTray;
 const St = imports.gi.St;
 const Main = imports.ui.main;
+const UPowerGlib = imports.gi.UPowerGlib;
 
 const IS_VERSION_BEFORE_5_4 = parseFloat(Config.PACKAGE_VERSION.split('.')[0] + '.' + Config.PACKAGE_VERSION.split('.')[1]) < 5.4;
 
 const Preset = {
+   None: 0,
    Subtle: 1,
    Realistic: 2,
    Exaggerated: 3,
@@ -94,7 +96,7 @@ class SettingsHandler {
 
         this._signalManager = new SignalManager.SignalManager(null);
         this._signalManager.connect(global.display, "notify::focus-window", this._onFocusChanged, this);
-        this._signalManager.connect(this.settings, "changed::presetList", this._onPresetListChanged, this);
+        this._signalManager.connect(this.settings, "changed::presetList", this.onPresetListChanged, this);
 
         this.bind("friction", "customFriction", this._updateConfig);
         this.bind("springK", "customSpringK", this._updateConfig);
@@ -105,7 +107,7 @@ class SettingsHandler {
         this.bind("maxUnmaxFactor", "customMaxUnmaxFactor", this._updateConfig);
 
         // Update the config based on the current presetList value
-        this._onPresetListChanged();
+        this.onPresetListChanged();
     }
 
     _updateConfig() {
@@ -123,8 +125,13 @@ class SettingsHandler {
         this.last_focused_window = global.display.get_focus_window();
     }
 
-    _onPresetListChanged() {
-        let preset = this.settings.getValue("presetList");
+    onPresetListChanged() {
+        let preset;
+        if (!this.usingPowerSetup) {
+           preset = this.settings.getValue("presetList");
+        } else {
+           preset = this.settings.getValue("powerPresetList");
+        }
         switch (preset) {
         case Preset.Subtle:
             this.friction = 1.5;
@@ -231,6 +238,9 @@ class CompizWindowsEffectExtension {
     }
 
     enable() {
+        this._upClient = new UPowerGlib.Client();
+        this._upDisplayDevice = this._upClient.get_display_device();
+
         this.beginGrabOpId = global.display.connect('grab-op-begin', this.onBeginGrabOp.bind(this));
         this.endGrabOpId = global.display.connect('grab-op-end', this.onEndGrabOp.bind(this));
         if (settings.maxUnmaxFactor) {
@@ -280,6 +290,21 @@ class CompizWindowsEffectExtension {
         let appId = app ? app.get_id() : null;
         let excludeList = settings.settings.getValue("excludeList");
         let entry = excludeList.find( (element) => {if (element.application == appId || element.application == wmclass) {return true;}} );
+        if (!entry) {
+            let power = ( settings.settings.getValue("power-onbattery") === true &&
+                  this._upDisplayDevice.state === UPowerGlib.DeviceState.DISCHARGING &&
+                  this._upDisplayDevice.percentage < settings.settings.getValue("power-percent") );
+            if (power && settings.settings.getValue("powerPresetList") === Preset.None) {
+               return(false);
+            }
+            if (power && !settings.usingPowerSetup) {
+               settings.usingPowerSetup = true;
+               settings.onPresetListChanged();
+            } else if (!power && settings.usingPowerSetup) {
+               settings.usingPowerSetup = false;
+               settings.onPresetListChanged();
+            }
+        }
         return (entry===undefined);
     }
 
